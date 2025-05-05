@@ -1,0 +1,184 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+import io
+import time
+import speech_recognition as sr  # Added for voice commands
+from pybloom_live import BloomFilter
+from sorting_helper import insertion_sort, quick_sort, merge_sort
+from search_helper import binary_search, linear_search
+import os
+import streamlit as st
+
+# Your Streamlit code...
+
+# Set page config
+st.set_page_config(page_title="AI Sorting & Search Optimizer", page_icon="🔀", layout="wide")
+
+# Load trained ML model
+@st.cache_resource
+def load_model():
+    try:
+        return joblib.load("sorting_nn_model.pkl")
+    except Exception as e:
+        st.error(f"🚨 Error loading ML model: {str(e)}")
+        return None
+
+model = load_model()
+
+# Sidebar
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2956/2956851.png", width=120)
+st.sidebar.title("🔀 AI Sorting & Search Optimizer")
+st.sidebar.markdown("### Upload, Analyze & Optimize Your Data")
+
+# File uploader
+uploaded_file = st.sidebar.file_uploader("📂 Upload your dataset (CSV/Excel)", type=["csv", "xlsx"])
+
+# Speech Recognition Function
+def recognize_speech():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.info("🎤 Listening... Speak now!")
+        try:
+            audio = recognizer.listen(source, timeout=5)
+            command = recognizer.recognize_google(audio).lower()
+            st.success(f"✅ You said: `{command}`")
+            return command
+        except sr.UnknownValueError:
+            st.error("❌ Could not understand the audio.")
+        except sr.RequestError:
+            st.error("❌ Speech recognition service unavailable.")
+        except sr.WaitTimeoutError:
+            st.error("❌ No speech detected. Try again.")
+    return None
+
+# Main Content
+st.title("🚀 AI-Powered Sorting & Search Optimizer")
+
+if uploaded_file:
+    with st.spinner("🔄 Processing your dataset..."):
+        try:
+            # Read dataset
+            df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+            if df.empty:
+                st.error("❌ The uploaded file is empty! Please upload a valid dataset.")
+                st.stop()
+            
+            st.success("✅ Dataset Loaded Successfully!")
+            st.write("### Data Preview:")
+            st.dataframe(df.head(10))
+            
+            # Column selection
+            column = st.selectbox("🔽 Select a column to sort", df.columns)
+            data = df[column].dropna().tolist()
+            
+            # Convert to appropriate type
+            if df[column].dtype == object:
+                data = [str(x) for x in data]
+            else:
+                data = pd.to_numeric(data, errors="coerce").tolist()
+            
+            # Bloom Filter
+            bloom_filter = BloomFilter(capacity=len(data) * 2, error_rate=0.01)
+            for item in data:
+                bloom_filter.add(item)
+            st.success("✅ Bloom Filter Initialized!")
+            
+            # AI Model Prediction
+            sortedness = 0 if data == sorted(data) else (1 if data == sorted(data, reverse=True) else 2)
+            duplicates = len(data) - len(set(data))
+            input_data = np.array([[len(data), sortedness, duplicates]])
+            
+            try:
+                predicted_algo = model.predict(input_data)[0]
+                algo_map = {0: "InsertionSort", 1: "QuickSort", 2: "MergeSort"}
+                chosen_algo = algo_map.get(predicted_algo, "QuickSort")
+            except Exception as e:
+                st.error(f"🚨 Error predicting sorting algorithm: {str(e)}")
+                chosen_algo = "QuickSort"
+            
+            st.markdown(f"### 🤖 AI Selected Sorting Algorithm: **`{chosen_algo}`**")
+            
+            # Apply sorting
+            start_time = time.time()
+            if chosen_algo == "InsertionSort":
+                sorted_data, exec_time = insertion_sort(data)
+            elif chosen_algo == "QuickSort":
+                sorted_data, exec_time = quick_sort(data)
+            else:
+                sorted_data, exec_time = merge_sort(data)
+            exec_time = time.time() - start_time
+            
+            st.success(f"✅ Sorting Completed in `{exec_time:.6f} seconds`")
+            df[column] = sorted_data
+            
+            # Display sorted dataset preview
+            st.markdown("### 🔢 Sorted Dataset Preview:")
+            st.dataframe(df.head(10))
+            
+            # Recommended search algorithm
+            search_algo = "Binary Search" if chosen_algo in ["MergeSort", "QuickSort"] else "Linear Search"
+            st.markdown(f"### 🔍 Recommended Search Algorithm: **`{search_algo}`**")
+            
+            # Search feature
+            search_value = st.text_input("🔍 Enter a value to search (optional)")
+            if search_value:
+                try:
+                    if df[column].dtype == object:
+                        search_value = str(search_value)
+                    else:
+                        search_value = pd.to_numeric(search_value, errors="coerce")
+                    
+                    if search_value in bloom_filter:
+                        st.success(f"✅ Bloom Filter: `{search_value}` **Might Exist** in dataset! Searching...")
+                        index = binary_search(sorted_data, search_value) if search_algo == "Binary Search" else linear_search(sorted_data, search_value)
+                        
+                        if index != -1:
+                            st.success(f"✅ Value `{search_value}` found at index `{index}`")
+                        else:
+                            st.error(f"❌ Value `{search_value}` not found in dataset.")
+                    else:
+                        st.warning(f"⚠️ Bloom Filter: `{search_value}` **Definitely Does Not Exist** in dataset!")
+                except Exception as e:
+                    st.error(f"⚠️ Search Error: {e}")
+            
+            # Voice Command Button
+            if st.button("🎤 Use Voice Command"):
+                command = recognize_speech()
+                if command:
+                    if "sort by" in command:
+                        column = command.replace("sort by ", "").strip()
+                        if column in df.columns:
+                            df_sorted = df.sort_values(by=[column])
+                            st.write(f"✅ Sorted Data by `{column}`:")
+                            st.dataframe(df_sorted)
+                        else:
+                            st.error(f"❌ Column `{column}` not found!")
+
+                    elif "search" in command:
+                        keyword = command.replace("search ", "").strip()
+                        result = df[df.apply(lambda row: row.astype(str).str.contains(keyword, case=False).any(), axis=1)]
+                        if not result.empty:
+                            st.write(f"✅ Search Results for `{keyword}`:")
+                            st.dataframe(result)
+                        else:
+                            st.warning(f"❌ No results found for `{keyword}`.")
+
+                    else:
+                        st.error("❌ Command not recognized. Try 'Sort by [column]' or 'Search [keyword]'.")
+
+            # Download sorted dataset
+            csv_data = io.BytesIO()
+            df.to_csv(csv_data, index=False)
+            csv_data.seek(0)
+            st.download_button("📥 Download Sorted Dataset", csv_data, file_name="sorted_output.csv", mime="text/csv", help="Download your sorted dataset in CSV format.")
+        
+        except Exception as e:
+            st.error(f"🚨 Error processing dataset: {str(e)}")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    st.set_page_config(page_title="My App")
+    st.write("Hello from Streamlit on Cloud Run!")
+    st.run(port=port, host="0.0.0.0")
