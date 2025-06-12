@@ -36,4 +36,6 @@ This project introduces an **intelligent sorting algorithm recommender system** 
 - **Deployment**: Docker, CI/CD (GitHub Actions or Cloud Build)
 
 ---
+## Deployment
+- https://applicative2-730746847827.asia-southeast1.run.app/
 
